@@ -16,123 +16,30 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
+mod util;
+mod img;
+mod audio;
+
 use std::path;
 use std::io::{Read, Write};
+use crate::util::position::Position;
+use crate::util::content_type::ContentType;
+use crate::img::png::rip_png;
+use crate::img::jpeg::rip_jpeg;
+use crate::audio::mp3::rip_mp3;
 
 #[derive(Debug)]
-enum ContentType {
-    PNG,
-    JPEG,
-}
-
-#[derive(Debug)]
-struct Position {
-    start: usize,
-    end: usize,
-    content_type: ContentType,
-}
-
-// Reads data from specified start_index position,
-// if valid png bytes were found - returns exact positions of an image
-fn rip_png(data: &[u8], start_index: usize) -> Option<Position> {
-    const PNG_IDENTIFIER: [u8; 8] = [0x89, 0x50, 0x4E, 0x47, 0xD, 0xA, 0x1A, 0xA];
-    const PNG_END_IDENTIFIER: [u8; 8] = [0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82];
-
-    if data.len() < PNG_IDENTIFIER.len() + PNG_END_IDENTIFIER.len() ||
-        start_index + PNG_IDENTIFIER.len() + PNG_END_IDENTIFIER.len() > data.len() {
-        return None;
-    }
-
-    let mut position: Position = Position{
-        start: usize::MAX,
-        end: usize::MAX,
-        content_type: ContentType::PNG,
-    };
-
-    for i in start_index..data.len() {
-        // start index
-        if i < data.len() - PNG_IDENTIFIER.len() && position.start == usize::MAX {
-            if data[i..i + PNG_IDENTIFIER.len()] == PNG_IDENTIFIER {
-                position.start = i;
-            }
-        }
-
-        // end index
-        if i <= data.len() - PNG_END_IDENTIFIER.len() && position.end == usize::MAX {
-            if data[i..i + PNG_END_IDENTIFIER.len()] == PNG_END_IDENTIFIER {
-                position.end = i;
-            }
-        }
-
-        if position.start != usize::MAX && position.end != usize::MAX {
-            break;
-        }
-    }
-
-    if position.start == usize::MAX || position.end == usize::MAX || position.end <= position.start {
-        return None;
-    }
-
-    return Some(position);
-}
-
-// Reads data from specified start_index position,
-// if valid png bytes were found - returns exact positions of an image
-fn rip_jpeg(data: &[u8], start_index: usize) -> Option<Position> {
-    const JPEG_IDENTIFIER: [u8; 3] = [0xFF, 0xD8, 0xFF];
-    const JPEG_END_IDENTIFIER: [u8; 2] = [0xFF, 0xD9];
-
-    if data.len() < JPEG_IDENTIFIER.len() + JPEG_END_IDENTIFIER.len() ||
-        start_index + JPEG_IDENTIFIER.len() + JPEG_END_IDENTIFIER.len() > data.len() {
-        return None;
-    }
-
-    let mut position: Position = Position{
-        start: usize::MAX,
-        end: usize::MAX,
-        content_type: ContentType::JPEG,
-    };
-
-    for i in start_index..data.len() {
-        // start index
-        if i < data.len() - JPEG_IDENTIFIER.len() && position.start == usize::MAX {
-            if data[i..i + JPEG_IDENTIFIER.len()] == JPEG_IDENTIFIER {
-                position.start = i;
-            }
-        }
-
-        // end index
-        if i <= data.len() - JPEG_END_IDENTIFIER.len() && position.end == usize::MAX {
-            if data[i..i + JPEG_END_IDENTIFIER.len()] == JPEG_END_IDENTIFIER {
-                position.end = i;
-            }
-        }
-
-        if position.start != usize::MAX && position.end != usize::MAX {
-            break;
-        }
-    }
-
-    if position.start == usize::MAX || position.end == usize::MAX || position.end < position.start {
-        return None;
-    }
-
-    return Some(position);
-}
-
-
-#[derive(Debug)]
-enum RIPTYPE {
+enum RipType {
     ALL,
     IMG,
+    AUDIO,
 }
-
 
 fn main() {
     let mut save_directory: &path::Path = path::Path::new(".");
     let mut file_paths: Vec<&path::Path> = Vec::new();
     let mut max_file_size: u128 = u128::MAX;
-    let mut rip_type: RIPTYPE = RIPTYPE::ALL;
+    let mut rip_type: RipType = RipType::ALL;
 
     // work out the arguments
     let args: Vec<String> = std::env::args().collect();
@@ -157,15 +64,16 @@ fn main() {
                 \"-mfs\" or \"--max-file-size\" [SIZE]  -> skip files bigger than size (in bytes)\n
                 \n\
                 [RIPTYPE]\n\
-                ALL  -> rip everything that seems like an embedded content\n\
-                IMG  -> try to look for images only\n\
+                ALL   -> rip everything that seems like an embedded content\n\
+                IMG   -> try to look for images only\n\
+                AUDIO -> rip audio content\n
                 "
             );
             return;
         }
         else if &args[arg_index] == "-v" || &args[arg_index] == "--version" {
             println!(
-                "rip v0.1\
+                "rip v0.2\
                 \n
                 \n\
                 (c) 2022 Kasyanov Nikolay Alexeyevich (Unbewohnte)\
@@ -224,10 +132,18 @@ fn main() {
             }
         }
         else if file_paths.len() == 0 && &args[arg_index].to_lowercase() == "all" {
-            rip_type = RIPTYPE::ALL;
+            rip_type = RipType::ALL;
+            println!("Ripping EVERYTHING (JPEG, PNG, MP3)");
         }
         else if file_paths.len() == 0 && &args[arg_index].to_lowercase() == "img" {
-            rip_type = RIPTYPE::IMG;
+            rip_type = RipType::IMG;
+            println!("Ripping IMAGES (JPEG, PNG)");
+        }
+        else if file_paths.len() == 0 && &args[arg_index].to_lowercase() == "audio" {
+            rip_type = RipType::AUDIO;
+            println!("[INFO] Not implemented");
+            return;
+            // println!("Ripping AUDIO (MP3)");
         }
         else {
             // that's a path to the file to be examined
@@ -236,8 +152,6 @@ fn main() {
 
         arg_index += 1;
     }
-
-    println!("Riptype {:?}", rip_type);
 
     for file_path in file_paths {
         print!("\n");
@@ -301,7 +215,7 @@ fn main() {
         let mut positions: Vec<Position> = Vec::new();
 
         match rip_type {
-            RIPTYPE::IMG => {
+            RipType::IMG => {
                 // find PNG positions
                 let mut cursor_index: usize = 0;
                 while (cursor_index as u64) < file_metadata.len() {
@@ -333,7 +247,26 @@ fn main() {
                 }
             }
 
-            RIPTYPE::ALL => {
+            RipType::AUDIO => {
+                // find MP3 positions
+                // let mut cursor_index = 0;
+                // while (cursor_index as u64) < file_metadata.len() {
+                //     match rip_mp3(&file_contents, cursor_index) {
+                //         Some(pos) => {
+                //             cursor_index = pos.end;
+                //             println!("b {:?}", pos);
+                //             positions.push(pos);
+                //         }
+                //         None => {
+                //             // no MP3s were found
+                //             break;
+                //         }
+                //     }
+                // }
+
+            }
+
+            RipType::ALL => {
                 // find PNG positions
                 let mut cursor_index: usize = 0;
                 while (cursor_index as u64) < file_metadata.len() {
@@ -363,6 +296,21 @@ fn main() {
                         }
                     }
                 }
+
+                // find MP3 positions
+                // cursor_index = 0;
+                // while (cursor_index as u64) < file_metadata.len() {
+                //     match rip_mp3(&file_contents, cursor_index) {
+                //         Some(pos) => {
+                //             cursor_index = pos.end;
+                //             positions.push(pos);
+                //         }
+                //         None => {
+                //             // no MP3s were found
+                //             break;
+                //         }
+                //     }
+                // }
             }
         }
 
@@ -396,6 +344,10 @@ fn main() {
 
                 ContentType::JPEG => {
                     output_file_path_string = output_file_path_string + &format!("_{}.jpeg", position_index);
+                }
+
+                ContentType::MP3 => {
+                    output_file_path_string = output_file_path_string + &format!("_{}.mp3", position_index);
                 }
             }
 
