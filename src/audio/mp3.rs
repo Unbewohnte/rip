@@ -22,12 +22,19 @@ use crate::util::content_type::ContentType;
 const ID3V2_IDENTIFIER: [u8; 3] = [0x49, 0x44, 0x33];
 const ID3V2_HEADER_LENGTH: usize = 10;
 const MP3_HEADER_LENGTH: usize = 4;
-const MP3_HEADER_SYNC_WORD_MASK: u32 = 0xFFE00000; // 11111111111000000000000000000000
-const MP3_HEADER_VERSION_MASK: u32 = 0x180000;     // 00000000000110000000000000000000
-const MP3_HEADER_LAYER_MASK: u32 = 0x60000;        // 00000000000001100000000000000000
-const MP3_HEADER_BITRATE_MASK: u32 = 0xF000;       // 00000000000000001111000000000000
-const MP3_HEADER_SAMPLING_RATE_MASK: u32 = 0xC00;  // 00000000000000000000110000000000
-const MP3_HEADER_PADDING_MASK: u32 = 0x200;        // 00000000000000000000001000000000
+const MP3_HEADER_SYNC_WORD_MASK: u32 = 0xFFE00000;      // 11111111111000000000000000000000
+const MP3_HEADER_VERSION_MASK: u32 = 0x00180000;        // 00000000000110000000000000000000
+const MP3_HEADER_LAYER_MASK: u32 = 0x00060000;          // 00000000000001100000000000000000
+const MP3_HEADER_BITRATE_MASK: u32 = 0x0000F000;        // 00000000000000001111000000000000
+const MP3_HEADER_SAMPLING_RATE_MASK: u32 = 0x00000C00;  // 00000000000000000000110000000000
+const MP3_HEADER_PADDING_MASK: u32 = 0x00000200;        // 00000000000000000000001000000000
+
+// const MP3_HEADER_SYNC_WORD_MASK: u32 = 0xFFF00000;         // 11111111111100000000000000000000
+// const MP3_HEADER_VERSION_MASK: u32 = 0xC0000;              // 00000000000011000000000000000000
+// const MP3_HEADER_LAYER_MASK: u32 = 0x30000;                // 00000000000000110000000000000000
+// const MP3_HEADER_BITRATE_MASK: u32 = 0x7800;               // 00000000000000000111100000000000
+// const MP3_HEADER_SAMPLING_RATE_MASK: u32 = 0x600;          // 00000000000000000000011000000000
+// const MP3_HEADER_PADDING_MASK: u32 = 0x100;                // 00000000000000000000000100000000
 
 #[derive(Debug)]
 enum AudioVersion {
@@ -97,8 +104,8 @@ fn get_bitrate(header: u32, audio_version: &AudioVersion, layer: &LayerIndex) ->
 
                 AudioVersion::MpegV2 | AudioVersion::MpegV25 => {
                     match layer {
-                        LayerIndex::LayerI => return Some(32),
-                        LayerIndex::LayerII | LayerIndex::LayerIII => return Some(16),
+                        LayerIndex::LayerI => return Some(56),
+                        LayerIndex::LayerII | LayerIndex::LayerIII => return Some(24),
                     }
                 }
             }
@@ -441,9 +448,9 @@ pub fn rip_mp3(data: &[u8], start_index: usize) -> Option<Position> {
                 // get tag length
                 let mut tag_length_bytes: [u8; 4] = [0; 4];
                 for j in 0..4 {
-                    tag_length_bytes[j] = data[i+ID3V2_IDENTIFIER.len()+5+j];
+                    tag_length_bytes[j] = data[i+ID3V2_IDENTIFIER.len()+3+j];
                 }
-                // convert from syncsafe to a normal integer
+                // convert syncsafe integer to a normal one
                 let mut tag_length: u32 = 0;
                 for j in 0..4 {
                     tag_length = tag_length << 7;
@@ -474,6 +481,7 @@ pub fn rip_mp3(data: &[u8], start_index: usize) -> Option<Position> {
 
                     // check for sync word
                     if !mp3_header & MP3_HEADER_SYNC_WORD_MASK == MP3_HEADER_SYNC_WORD_MASK {
+                        println!("SYNCWORD NO");
                         break;
                     }
 
@@ -487,7 +495,7 @@ pub fn rip_mp3(data: &[u8], start_index: usize) -> Option<Position> {
                     let audio_version: AudioVersion;
                     match get_audio_version(mp3_header) {
                         Some(version) => audio_version = version,
-                        None => break,
+                        None => {println!("VERSION NO {:032x}", mp3_header & MP3_HEADER_VERSION_MASK); break},
                     }
 
                     println!("audio version is {:?}", audio_version);
@@ -496,7 +504,7 @@ pub fn rip_mp3(data: &[u8], start_index: usize) -> Option<Position> {
                     let layer: LayerIndex;
                     match get_layer(mp3_header) {
                         Some(l) => layer = l,
-                        None => break,
+                        None => {println!("LAYER NO"); break},
                     }
 
                     println!("layer is {:?}", layer);
@@ -506,7 +514,7 @@ pub fn rip_mp3(data: &[u8], start_index: usize) -> Option<Position> {
                     let bitrate: u16;
                     match get_bitrate(mp3_header, &audio_version, &layer) {
                         Some(rate) => bitrate = rate,
-                        None => break,
+                        None => {println!("BITRATE NO"); break},
                     }
 
                     println!("bitrate is {}", bitrate);
@@ -519,7 +527,7 @@ pub fn rip_mp3(data: &[u8], start_index: usize) -> Option<Position> {
                     let sampling_rate: u16;
                     match get_sampling_rate(mp3_header, &audio_version) {
                         Some(rate) => sampling_rate = rate,
-                        None => break,
+                        None => {println!("SAMPLING RATE NO"); break},
                     }
 
                     println!("sampling rate is {}", sampling_rate);
@@ -535,18 +543,22 @@ pub fn rip_mp3(data: &[u8], start_index: usize) -> Option<Position> {
 
                     println!("padding is {}", padding);
 
+                    let slot_size: u32;
+                    match layer {
+                        LayerIndex::LayerI => slot_size = 4,
+                        _ => slot_size = 1,
+                    }
+
+                    let multiplier: u32;
+                    match layer {
+                        LayerIndex::LayerI => multiplier = 12,
+                        _ => multiplier = 144000,
+                    }
+
+                    let slot_count: u32 = ((multiplier as u32 * (bitrate as u32 * 1000)) / sampling_rate as u32) + padding as u32;
 
                     // finally calculate frame size
-                    let frame_size: u32;
-                    match layer {
-                        LayerIndex::LayerI => {
-                            frame_size = (12 * bitrate as u32 * 1000 / sampling_rate as u32 + padding as u32) * 4;
-                        } 
-
-                        LayerIndex::LayerII | LayerIndex::LayerIII => {
-                            frame_size = 144 * bitrate as u32 * 1000 / (sampling_rate as u32 + padding as u32);
-                        }
-                    }
+                    let frame_size: u32 = slot_count * slot_size;
                     println!("frame size is {}", frame_size);
 
                     // set cursor to the next frame

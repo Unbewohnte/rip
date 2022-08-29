@@ -141,9 +141,7 @@ fn main() {
         }
         else if file_paths.len() == 0 && &args[arg_index].to_lowercase() == "audio" {
             rip_type = RipType::AUDIO;
-            println!("[INFO] Not implemented");
-            return;
-            // println!("Ripping AUDIO (MP3)");
+            println!("Ripping AUDIO (MP3)");
         }
         else {
             // that's a path to the file to be examined
@@ -249,20 +247,20 @@ fn main() {
 
             RipType::AUDIO => {
                 // find MP3 positions
-                // let mut cursor_index = 0;
-                // while (cursor_index as u64) < file_metadata.len() {
-                //     match rip_mp3(&file_contents, cursor_index) {
-                //         Some(pos) => {
-                //             cursor_index = pos.end;
-                //             println!("b {:?}", pos);
-                //             positions.push(pos);
-                //         }
-                //         None => {
-                //             // no MP3s were found
-                //             break;
-                //         }
-                //     }
-                // }
+                let mut cursor_index = 0;
+                while (cursor_index as u64) < file_metadata.len() {
+                    match rip_mp3(&file_contents, cursor_index) {
+                        Some(pos) => {
+                            cursor_index = pos.end;
+                            println!("b {:?}", pos);
+                            positions.push(pos);
+                        }
+                        None => {
+                            // no MP3s were found
+                            break;
+                        }
+                    }
+                }
 
             }
 
