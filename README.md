@@ -4,7 +4,7 @@
 # Use
 `rip -h` will print out this help message
 
-`
+```
 rip (optional)[FLAG]... (optional; default=ALL)[RIPTYPE] [FILE]...
 
                 
@@ -19,7 +19,7 @@ rip (optional)[FLAG]... (optional; default=ALL)[RIPTYPE] [FILE]...
 ALL   -> rip everything that seems like an embedded content
 IMG   -> try to look for images only
 AUDIO -> rip audio content
-`
+```
 
 ### Examples
 - `rip audio music/*` -> extract found audio data from all files in music directory
