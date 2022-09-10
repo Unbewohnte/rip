@@ -20,6 +20,11 @@ cross_release: clean
 	cp COPYING release/rip_i686-unknown-linux-musl
 	cp COPYING release/rip_i686-pc-windows-gnu
 
+	cp README.md release/rip_x86_64-pc-windows-gnu
+	cp README.md release/rip_x86_64-unknown-linux-musl
+	cp README.md release/rip_i686-unknown-linux-musl
+	cp README.md release/rip_i686-pc-windows-gnu
+
 	cp target/x86_64-pc-windows-gnu/release/rip.exe release/rip_x86_64-pc-windows-gnu
 	cp target/x86_64-unknown-linux-musl/release/rip release/rip_x86_64-unknown-linux-musl
 	cp target/i686-unknown-linux-musl/release/rip release/rip_i686-unknown-linux-musl
