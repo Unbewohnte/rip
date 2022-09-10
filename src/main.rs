@@ -66,18 +66,14 @@ fn main() {
                 [RIPTYPE]\n\
                 ALL   -> rip everything that seems like an embedded content\n\
                 IMG   -> try to look for images only\n\
-                AUDIO -> rip audio content\n
-                "
+                AUDIO -> rip audio content"
             );
             return;
         }
         else if &args[arg_index] == "-v" || &args[arg_index] == "--version" {
             println!(
-                "rip v0.2\
-                \n
-                \n\
-                (c) 2022 Kasyanov Nikolay Alexeyevich (Unbewohnte)\
-                "
+                "rip v0.3\n\n\
+                (c) 2022 Kasyanov Nikolay Alexeyevich (Unbewohnte)"
             );
             return;
         }
@@ -252,7 +248,6 @@ fn main() {
                     match rip_mp3(&file_contents, cursor_index) {
                         Some(pos) => {
                             cursor_index = pos.end;
-                            println!("b {:?}", pos);
                             positions.push(pos);
                         }
                         None => {
@@ -296,19 +291,19 @@ fn main() {
                 }
 
                 // find MP3 positions
-                // cursor_index = 0;
-                // while (cursor_index as u64) < file_metadata.len() {
-                //     match rip_mp3(&file_contents, cursor_index) {
-                //         Some(pos) => {
-                //             cursor_index = pos.end;
-                //             positions.push(pos);
-                //         }
-                //         None => {
-                //             // no MP3s were found
-                //             break;
-                //         }
-                //     }
-                // }
+                cursor_index = 0;
+                while (cursor_index as u64) < file_metadata.len() {
+                    match rip_mp3(&file_contents, cursor_index) {
+                        Some(pos) => {
+                            cursor_index = pos.end;
+                            positions.push(pos);
+                        }
+                        None => {
+                            // no MP3s were found
+                            break;
+                        }
+                    }
+                }
             }
         }
 
@@ -337,15 +332,18 @@ fn main() {
             let mut output_file_path_string: String = save_directory.join(&source_file_name).to_string_lossy().to_string();
             match positions[position_index].content_type {
                 ContentType::PNG => {
-                    output_file_path_string = output_file_path_string + &format!("_{}.png", position_index);
+                    output_file_path_string = 
+                        output_file_path_string + &format!("_{}.png", position_index);
                 }
 
                 ContentType::JPEG => {
-                    output_file_path_string = output_file_path_string + &format!("_{}.jpeg", position_index);
+                    output_file_path_string =
+                        output_file_path_string + &format!("_{}.jpeg", position_index);
                 }
 
                 ContentType::MP3 => {
-                    output_file_path_string = output_file_path_string + &format!("_{}.mp3", position_index);
+                    output_file_path_string =
+                        output_file_path_string + &format!("_{}.mp3", position_index);
                 }
             }
 
@@ -368,7 +366,10 @@ fn main() {
                 }
             }
 
-            println!("[INFO] Outputted {}", output_file_path_string);
+            println!("[INFO] Outputted {} ({} bytes)",
+                output_file_path_string,
+                positions[position_index].end - positions[position_index].start
+            );
         }
     }
 }

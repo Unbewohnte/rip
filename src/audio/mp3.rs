@@ -22,409 +22,144 @@ use crate::util::content_type::ContentType;
 const ID3V2_IDENTIFIER: [u8; 3] = [0x49, 0x44, 0x33];
 const ID3V2_HEADER_LENGTH: usize = 10;
 const MP3_HEADER_LENGTH: usize = 4;
-const MP3_HEADER_SYNC_WORD_MASK: u32 = 0xFFE00000;      // 11111111111000000000000000000000
-const MP3_HEADER_VERSION_MASK: u32 = 0x00180000;        // 00000000000110000000000000000000
-const MP3_HEADER_LAYER_MASK: u32 = 0x00060000;          // 00000000000001100000000000000000
-const MP3_HEADER_BITRATE_MASK: u32 = 0x0000F000;        // 00000000000000001111000000000000
-const MP3_HEADER_SAMPLING_RATE_MASK: u32 = 0x00000C00;  // 00000000000000000000110000000000
-const MP3_HEADER_PADDING_MASK: u32 = 0x00000200;        // 00000000000000000000001000000000
 
-// const MP3_HEADER_SYNC_WORD_MASK: u32 = 0xFFF00000;         // 11111111111100000000000000000000
-// const MP3_HEADER_VERSION_MASK: u32 = 0xC0000;              // 00000000000011000000000000000000
-// const MP3_HEADER_LAYER_MASK: u32 = 0x30000;                // 00000000000000110000000000000000
-// const MP3_HEADER_BITRATE_MASK: u32 = 0x7800;               // 00000000000000000111100000000000
-// const MP3_HEADER_SAMPLING_RATE_MASK: u32 = 0x600;          // 00000000000000000000011000000000
-// const MP3_HEADER_PADDING_MASK: u32 = 0x100;                // 00000000000000000000000100000000
+// bitrate table for mpeg Version+Layer
+const MP3_BITRATE_TABLE: [[[u32; 15]; 3]; 2] = [
+    // mpegv1
+    [
+        // layer I
+        [
+            0, 32000, 64000, 96000, 128000, 160000,
+            192000, 224000, 256000, 288000, 320000,
+            352000, 384000, 416000, 448000,
+        ],
+        // layer II
+        [
+            0, 32000, 48000, 56000, 64000, 80000,
+            96000, 112000, 128000, 160000, 192000,
+            224000, 256000, 320000, 384000,
+        ],
+        // layer III
+        [
+            0, 32000, 40000, 48000, 56000, 64000,
+            80000, 96000, 112000, 128000, 160000,
+            192000, 224000, 256000, 320000,
+        ],
+    ],
+    //mpegv2
+    [
+        // layer I
+        [
+            0, 32_000, 48_000, 56_000, 64_000, 80_000,
+            96_000, 112_000, 128_000, 144_000, 160_000,
+            176_000, 192_000, 224_000, 256_000,
+        ],
+        // layer III
+        [
+            0, 8_000, 16_000, 24_000, 32_000, 40_000, 48_000,
+            56_000, 64_000, 80_000, 96_000, 112_000, 128_000,
+            144_000, 160_000,
+        ],
+        // layer III
+        [
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        ],
+    ],
+];
 
-#[derive(Debug)]
-enum AudioVersion {
-    MpegV1,
-    MpegV2,
-    MpegV25,
+enum Layer {
+    I,
+    II,
+    III,
 }
 
-#[derive(Debug)]
-enum LayerIndex {
-    LayerI,
-    LayerII,
-    LayerIII,
+#[derive(Debug, PartialEq, Eq)]
+enum MpegVersion {
+    V1,
+    V2,
+    V2_5,
 }
 
-fn get_bitrate(header: u32, audio_version: &AudioVersion, layer: &LayerIndex) -> Option<u16> {
-    match header & MP3_HEADER_BITRATE_MASK {
-        // 0001
-        0x1000 => {
-            match audio_version {
-                AudioVersion::MpegV1 => {
-                    match layer {
-                        LayerIndex::LayerI | LayerIndex::LayerII | LayerIndex::LayerIII => return Some(32),
-                    }
-                }
+struct MP3Header {
+    bitrate: u32,
+    layer: Layer,
+    version: MpegVersion,
+    sampling_rate: u32,
+    padding: bool,
+}
 
-                AudioVersion::MpegV2 | AudioVersion::MpegV25 => {
-                    match layer {
-                        LayerIndex::LayerI => return Some(32),
-                        LayerIndex::LayerII | LayerIndex::LayerIII => return Some(8),
-                    }
-                }
-            }
+impl MP3Header {
+    fn from_bytes(header_bytes: &[u8; MP3_HEADER_LENGTH]) -> Result<MP3Header, &'static str> {
+        let header: u32 = u32::from_be_bytes(*header_bytes);
+        // check sync
+        if header & 0xFFE00000 != 0xFFE00000 {
+            return Err("does not contain sync");
         }
 
-
-        // 0010
-        0x2000 => {
-            match audio_version {
-                AudioVersion::MpegV1 => {
-                    match layer {
-                        LayerIndex::LayerI => return Some(64),
-                        LayerIndex::LayerII => return Some(48),
-                        LayerIndex::LayerIII => return Some(40),
-                    }
-                }
-
-                AudioVersion::MpegV2 | AudioVersion::MpegV25 => {
-                    match layer {
-                        LayerIndex::LayerI => return Some(48),
-                        LayerIndex::LayerII | LayerIndex::LayerIII => return Some(16),
-                    }
-                }
-            }
+        // get version
+        let version: MpegVersion;
+        match (header & 0x180000) >> 19 {
+            0b00 => version = MpegVersion::V2_5,
+            0b10 => version = MpegVersion::V2,
+            0b11 => version = MpegVersion::V1,
+            _ => return Err("invalid mpeg version"),
         }
 
-        // 0011
-        0x3000 => {
-            match audio_version {
-                AudioVersion::MpegV1 => {
-                    match layer {
-                        LayerIndex::LayerI => return Some(96),
-                        LayerIndex::LayerII => return Some(56),
-                        LayerIndex::LayerIII => return Some(48),
-                    }
-                }
-
-                AudioVersion::MpegV2 | AudioVersion::MpegV25 => {
-                    match layer {
-                        LayerIndex::LayerI => return Some(56),
-                        LayerIndex::LayerII | LayerIndex::LayerIII => return Some(24),
-                    }
-                }
-            }
+        // get layer
+        let layer: Layer;
+        match (header & 0x60000) >> 17 {
+            0b01 => layer = Layer::III,
+            0b10 => layer = Layer::II,
+            0b11 => layer = Layer::I,
+            _ => return Err("invalid mpeg layer"),
         }
 
-        // 0100
-        0x4000 => {
-            match audio_version {
-                AudioVersion::MpegV1 => {
-                    match layer {
-                        LayerIndex::LayerI => return Some(128),
-                        LayerIndex::LayerII => return Some(64),
-                        LayerIndex::LayerIII => return Some(56),
-                    }
-                }
-
-                AudioVersion::MpegV2 | AudioVersion::MpegV25 => {
-                    match layer {
-                        LayerIndex::LayerI => return Some(64),
-                        LayerIndex::LayerII | LayerIndex::LayerIII => return Some(32),
-                    }
-                }
-            }
+        // calculate bitrate
+        let bitrate: u32;
+        match ((header & 0xF000) >> 12, &version, &layer) {
+            (n, MpegVersion::V1, Layer::I) => bitrate = MP3_BITRATE_TABLE[0][0][n as usize],
+            (n, MpegVersion::V1, Layer::II) => bitrate = MP3_BITRATE_TABLE[0][1][n as usize],
+            (n, MpegVersion::V1, Layer::III) => bitrate = MP3_BITRATE_TABLE[0][2][n as usize],
+            (n, MpegVersion::V2|MpegVersion::V2_5, Layer::I) => bitrate = MP3_BITRATE_TABLE[1][0][n as usize],
+            (n, MpegVersion::V2|MpegVersion::V2_5, Layer::III) => bitrate = MP3_BITRATE_TABLE[1][1][n as usize],
+            _ => return Err("invalid or too tricky frame header to calculate bitrate"),
         }
 
-        // 0101
-        0x5000 => {
-            match audio_version {
-                AudioVersion::MpegV1 => {
-                    match layer {
-                        LayerIndex::LayerI => return Some(160),
-                        LayerIndex::LayerII => return Some(80),
-                        LayerIndex::LayerIII => return Some(64),
-                    }
-                }
-
-                AudioVersion::MpegV2 | AudioVersion::MpegV25 => {
-                    match layer {
-                        LayerIndex::LayerI => return Some(80),
-                        LayerIndex::LayerII | LayerIndex::LayerIII => return Some(40),
-                    }
-                }
-            }
+        // sample rate
+        let sampling_rate: u32;
+        match ((header & 0xC00) >> 10, &version) {
+            (0b00, MpegVersion::V1) => sampling_rate = 44100,
+            (0b01, MpegVersion::V1) => sampling_rate = 48000,
+            (0b10, MpegVersion::V1) => sampling_rate = 32000,
+            (0b00, MpegVersion::V2) => sampling_rate = 22050,
+            (0b01, MpegVersion::V2) => sampling_rate = 24000,
+            (0b10, MpegVersion::V2) => sampling_rate = 16000,
+            (0b00, MpegVersion::V2_5) => sampling_rate = 11025,
+            (0b01, MpegVersion::V2_5) => sampling_rate = 12000,
+            (0b10, MpegVersion::V2_5) => sampling_rate = 8000,
+            _ => return Err("invalid sampling rate calculation"),
         }
 
-        // 0110
-        0x6000 => {
-            match audio_version {
-                AudioVersion::MpegV1 => {
-                    match layer {
-                        LayerIndex::LayerI => return Some(192),
-                        LayerIndex::LayerII => return Some(96),
-                        LayerIndex::LayerIII => return Some(80),
-                    }
-                }
+        let padding: bool = header & 0x200 != 0;
 
-                AudioVersion::MpegV2 | AudioVersion::MpegV25 => {
-                    match layer {
-                        LayerIndex::LayerI => return Some(96),
-                        LayerIndex::LayerII | LayerIndex::LayerIII => return Some(48),
-                    }
-                }
-            }
-        }
+        return Ok(MP3Header{
+            bitrate: bitrate,
+            layer: layer,
+            version: version,
+            sampling_rate: sampling_rate,
+            padding: padding,
+        });
+    }
 
-        // 0111
-        0x7000 => {
-            match audio_version {
-                AudioVersion::MpegV1 => {
-                    match layer {
-                        LayerIndex::LayerI => return Some(224),
-                        LayerIndex::LayerII => return Some(112),
-                        LayerIndex::LayerIII => return Some(96),
-                    }
-                }
-
-                AudioVersion::MpegV2 | AudioVersion::MpegV25 => {
-                    match layer {
-                        LayerIndex::LayerI => return Some(112),
-                        LayerIndex::LayerII | LayerIndex::LayerIII => return Some(56),
-                    }
-                }
-            }
-        }
-
-        // 1000
-        0x8000 => {
-            match audio_version {
-                AudioVersion::MpegV1 => {
-                    match layer {
-                        LayerIndex::LayerI => return Some(256),
-                        LayerIndex::LayerII => return Some(128),
-                        LayerIndex::LayerIII => return Some(112),
-                    }
-                }
-
-                AudioVersion::MpegV2 | AudioVersion::MpegV25 => {
-                    match layer {
-                        LayerIndex::LayerI => return Some(128),
-                        LayerIndex::LayerII | LayerIndex::LayerIII => return Some(64),
-                    }
-                }
-            }
-        }
-
-        // 1001
-        0x9000 => {
-            match audio_version {
-                AudioVersion::MpegV1 => {
-                    match layer {
-                        LayerIndex::LayerI => return Some(288),
-                        LayerIndex::LayerII => return Some(160),
-                        LayerIndex::LayerIII => return Some(128),
-                    }
-                }
-
-                AudioVersion::MpegV2 | AudioVersion::MpegV25 => {
-                    match layer {
-                        LayerIndex::LayerI => return Some(144),
-                        LayerIndex::LayerII | LayerIndex::LayerIII => return Some(80),
-                    }
-                }
-            }
-        }
-
-        // 1010
-        0xA000 => {
-            match audio_version {
-                AudioVersion::MpegV1 => {
-                    match layer {
-                        LayerIndex::LayerI => return Some(320),
-                        LayerIndex::LayerII => return Some(192),
-                        LayerIndex::LayerIII => return Some(160),
-                    }
-                }
-
-                AudioVersion::MpegV2 | AudioVersion::MpegV25 => {
-                    match layer {
-                        LayerIndex::LayerI => return Some(160),
-                        LayerIndex::LayerII | LayerIndex::LayerIII => return Some(96),
-                    }
-                }
-            }
-        }
-
-        // 1011
-        0xB000 => {
-            match audio_version {
-                AudioVersion::MpegV1 => {
-                    match layer {
-                        LayerIndex::LayerI => return Some(352),
-                        LayerIndex::LayerII => return Some(224),
-                        LayerIndex::LayerIII => return Some(192),
-                    }
-                }
-
-                AudioVersion::MpegV2 | AudioVersion::MpegV25 => {
-                    match layer {
-                        LayerIndex::LayerI => return Some(176),
-                        LayerIndex::LayerII | LayerIndex::LayerIII => return Some(112),
-                    }
-                }
-            }
-        }
-
-        // 1100
-        0xC000 => {
-            match audio_version {
-                AudioVersion::MpegV1 => {
-                    match layer {
-                        LayerIndex::LayerI => return Some(384),
-                        LayerIndex::LayerII => return Some(256),
-                        LayerIndex::LayerIII => return Some(224),
-                    }
-                }
-
-                AudioVersion::MpegV2 | AudioVersion::MpegV25 => {
-                    match layer {
-                        LayerIndex::LayerI => return Some(192),
-                        LayerIndex::LayerII | LayerIndex::LayerIII => return Some(128),
-                    }
-                }
-            }
-        }
-
-        // 1101
-        0xD000 => {
-            match audio_version {
-                AudioVersion::MpegV1 => {
-                    match layer {
-                        LayerIndex::LayerI => return Some(416),
-                        LayerIndex::LayerII => return Some(320),
-                        LayerIndex::LayerIII => return Some(256),
-                    }
-                }
-
-                AudioVersion::MpegV2 | AudioVersion::MpegV25 => {
-                    match layer {
-                        LayerIndex::LayerI => return Some(224),
-                        LayerIndex::LayerII | LayerIndex::LayerIII => return Some(144),
-                    }
-                }
-            }
-        }
-
-        // 1110
-        0xE000 => {
-            match audio_version {
-                AudioVersion::MpegV1 => {
-                    match layer {
-                        LayerIndex::LayerI => return Some(448),
-                        LayerIndex::LayerII => return Some(384),
-                        LayerIndex::LayerIII => return Some(320),
-                    }
-                }
-
-                AudioVersion::MpegV2 | AudioVersion::MpegV25 => {
-                    match layer {
-                        LayerIndex::LayerI => return Some(256),
-                        LayerIndex::LayerII | LayerIndex::LayerIII => return Some(160),
-                    }
-                }
-            }
-        }
-
-        _ => {
-            // invalid bitrate index
-            return None;
-        }
+    fn frame_size(&self) -> usize {
+        return {
+            (if self.version == MpegVersion::V1 {144} else {72} *
+             self.bitrate /
+             self.sampling_rate) as usize + if self.padding {1} else {0} 
+        };
     }
 }
 
-fn get_samples_per_frame(audio_version: &AudioVersion, layer: &LayerIndex) -> u16 {
-    match audio_version {
-        AudioVersion::MpegV1 => {
-            match layer {
-                LayerIndex::LayerI => return 384,
-                LayerIndex::LayerII => return 1152,
-                LayerIndex::LayerIII => return 1152,
-            }
-        }
-
-        AudioVersion::MpegV2 => {
-            match layer {
-                LayerIndex::LayerI => return 384,
-                LayerIndex::LayerII => return 1152,
-                LayerIndex::LayerIII => return 576,
-            }
-        }
-
-        AudioVersion::MpegV25 => {
-            match layer {
-                LayerIndex::LayerI => return 384,
-                LayerIndex::LayerII => return 1152,
-                LayerIndex::LayerIII => return 576,
-            }
-        }
-    }
-}
-
-fn get_sampling_rate(header: u32, audio_version: &AudioVersion) -> Option<u16> {
-    match header & MP3_HEADER_SAMPLING_RATE_MASK {
-        // 00
-        0x0 => {
-            match audio_version {
-                AudioVersion::MpegV1 => return Some(44100),
-                AudioVersion::MpegV2 => return Some(22050),
-                AudioVersion::MpegV25 => return Some(11025),
-            }
-        }
-
-        // 01
-        0x400 => {
-            match audio_version {
-                AudioVersion::MpegV1 => return Some(48000),
-                AudioVersion::MpegV2 => return Some(24000),
-                AudioVersion::MpegV25 => return Some(12000),
-            }
-        }
-
-        // 10
-        0x800 => {
-            match audio_version {
-                AudioVersion::MpegV1 => return Some(32000),
-                AudioVersion::MpegV2 => return Some(16000),
-                AudioVersion::MpegV25 => return Some(8000),
-            }
-        }
-
-        // invalid value
-        _ => return None                  
-    }
-}
-
-fn get_audio_version(header: u32) -> Option<AudioVersion> {
-    match header & MP3_HEADER_VERSION_MASK {
-        // 00
-        0x0 => return Some(AudioVersion::MpegV25),
-        // 10
-        0x100000 => return Some(AudioVersion::MpegV2),
-        // 11
-        0x180000 => return Some(AudioVersion::MpegV1),
-        // invalid version id
-        _ => return None,
-    }
-}
-
-fn get_layer(header: u32) -> Option<LayerIndex> {
-    match header & MP3_HEADER_LAYER_MASK {
-        // 01
-        0x20000 => return Some(LayerIndex::LayerIII),
-        // 10
-        0x40000 => return Some(LayerIndex::LayerII),
-        // 11
-        0x60000 => return Some(LayerIndex::LayerI),
-        // invalid layer index
-        _ => return None,
-    }
-}
 
 pub fn rip_mp3(data: &[u8], start_index: usize) -> Option<Position> {
     if data.len() < ID3V2_HEADER_LENGTH + MP3_HEADER_LENGTH + 1 ||
@@ -438,13 +173,10 @@ pub fn rip_mp3(data: &[u8], start_index: usize) -> Option<Position> {
         content_type: ContentType::MP3,
     };
 
-    let mut cursor_index: usize;
     for i in start_index..data.len() {
         if i < ID3V2_HEADER_LENGTH && position.start == usize::MAX {
             if data[i..i + ID3V2_IDENTIFIER.len()] == ID3V2_IDENTIFIER {
                 // found ID3v2 tag (the beginning of the MP3 file)
-                println!("id3 at {}", i);
-
                 // get tag length
                 let mut tag_length_bytes: [u8; 4] = [0; 4];
                 for j in 0..4 {
@@ -458,7 +190,6 @@ pub fn rip_mp3(data: &[u8], start_index: usize) -> Option<Position> {
                 }
 
                 let id3v2_end_index: usize = i + ID3V2_HEADER_LENGTH + tag_length as usize;
-                println!("id3v2 end index is {}; the data size is {}", id3v2_end_index, data.len());
                 if id3v2_end_index + MP3_HEADER_LENGTH > data.len() - 1 {
                     println!("not enough data length");
                     // strange: there's a valid ID3 tag but not enough data to store any music
@@ -466,114 +197,33 @@ pub fn rip_mp3(data: &[u8], start_index: usize) -> Option<Position> {
                 }
                 position.start = i;
 
-                cursor_index = id3v2_end_index;
-                loop {
-                    if cursor_index >= data.len() - 1 {
-                        break;
-                    }
-
-                    // whole header
-                    let mut mp3_header_bytes: [u8 ; MP3_HEADER_LENGTH] = [0; MP3_HEADER_LENGTH];
-                    for j in 0..MP3_HEADER_LENGTH {
-                        mp3_header_bytes[j] = data[cursor_index + j];
-                    }
-                    let mp3_header: u32 = u32::from_be_bytes(mp3_header_bytes);
-
-                    // check for sync word
-                    if !mp3_header & MP3_HEADER_SYNC_WORD_MASK == MP3_HEADER_SYNC_WORD_MASK {
-                        println!("SYNCWORD NO");
-                        break;
-                    }
-
-                    // that's really an MP3 !
-                    println!("mpeg header at {}", cursor_index);
-                    cursor_index += MP3_HEADER_LENGTH;
-
-                    println!("{:#032b}", mp3_header);
-
-                    // retrieve audio version
-                    let audio_version: AudioVersion;
-                    match get_audio_version(mp3_header) {
-                        Some(version) => audio_version = version,
-                        None => {println!("VERSION NO {:032x}", mp3_header & MP3_HEADER_VERSION_MASK); break},
-                    }
-
-                    println!("audio version is {:?}", audio_version);
-
-                    // get layer
-                    let layer: LayerIndex;
-                    match get_layer(mp3_header) {
-                        Some(l) => layer = l,
-                        None => {println!("LAYER NO"); break},
-                    }
-
-                    println!("layer is {:?}", layer);
-
-
-                    // decode that HUGE bitrate table
-                    let bitrate: u16;
-                    match get_bitrate(mp3_header, &audio_version, &layer) {
-                        Some(rate) => bitrate = rate,
-                        None => {println!("BITRATE NO"); break},
-                    }
-
-                    println!("bitrate is {}", bitrate);
-
-
-                    // samples per frame
-                    // let samples_per_frame: u16 = get_samples_per_frame(&audio_version, &layer);
-
-                    // sampling rate
-                    let sampling_rate: u16;
-                    match get_sampling_rate(mp3_header, &audio_version) {
-                        Some(rate) => sampling_rate = rate,
-                        None => {println!("SAMPLING RATE NO"); break},
-                    }
-
-                    println!("sampling rate is {}", sampling_rate);
-
-                
-                    // padding
-                    let padding: u8;
-                    if mp3_header == MP3_HEADER_PADDING_MASK {
-                        padding = 1;
-                    } else {
-                        padding = 0; 
-                    }
-
-                    println!("padding is {}", padding);
-
-                    let slot_size: u32;
-                    match layer {
-                        LayerIndex::LayerI => slot_size = 4,
-                        _ => slot_size = 1,
-                    }
-
-                    let multiplier: u32;
-                    match layer {
-                        LayerIndex::LayerI => multiplier = 12,
-                        _ => multiplier = 144000,
-                    }
-
-                    let slot_count: u32 = ((multiplier as u32 * (bitrate as u32 * 1000)) / sampling_rate as u32) + padding as u32;
-
-                    // finally calculate frame size
-                    let frame_size: u32 = slot_count * slot_size;
-                    println!("frame size is {}", frame_size);
-
-                    // set cursor to the next frame
-                    cursor_index += frame_size as usize;
-                    // extend end position
-                    position.end = cursor_index;
-                    println!("frame end at {}", cursor_index);
-                }
+                position.end = id3v2_end_index;
+                break;
             }
         }
+    }
 
-        if position.start != usize::MAX && position.end != usize::MAX {
-            break;
+    // return None immediately if id3 tag was not found
+    if position.start == usize::MAX {
+        return None;
+    }
+
+    // try to extract mp3 frames
+    let mut mp3_header_bytes: [u8; MP3_HEADER_LENGTH] = [0; MP3_HEADER_LENGTH];
+    while position.end < data.len() - MP3_HEADER_LENGTH {
+        for j in 0..MP3_HEADER_LENGTH {
+            mp3_header_bytes[j] = data[position.end + j];
         }
-    }   
+
+        match MP3Header::from_bytes(&mp3_header_bytes) {
+            Ok(header) => {
+                position.end += header.frame_size();
+            }
+            Err(_) => {
+                break;
+            }
+        }
+    }
 
     if position.start == usize::MAX || position.end == usize::MAX || position.end <= position.start {
         return None;

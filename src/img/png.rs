@@ -48,7 +48,6 @@ pub fn rip_png(data: &[u8], start_index: usize) -> Option<Position> {
         if i <= data.len() - PNG_END_IDENTIFIER.len() && position.end == usize::MAX {
             if data[i..i + PNG_END_IDENTIFIER.len()] == PNG_END_IDENTIFIER {
                 position.end = i + PNG_END_IDENTIFIER.len();
-                println!("end {}", position.end);
             }
         }
 
